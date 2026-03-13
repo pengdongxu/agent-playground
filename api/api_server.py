@@ -1,8 +1,11 @@
+import os
+
 import uvicorn
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 
 from agents.core import DeepSeekAgent
+from config import Config
 
 app = FastAPI (title="DeepSeek API", description="DeepSeek API", version="0.1.0")
 
@@ -39,6 +42,17 @@ async def chat(request: ChatRequest, bt: BackgroundTasks):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.delete("/chat/reset/{user_id}")
+async def reset(user_id: str):
+    if user_id in agents_pool: del agents_pool[user_id]
+
+    h_path = Config.HISTORY_DIR / f"{user_id}.json"
+    p_path = Config.PROFILE_DIR / f"{user_id}.txt"
+
+    for path in [h_path, p_path]:
+        if path.exists(): os.remove(path)
+
+    return HTTPException(status_code=200, detail="OK")
 if __name__ == "__main__":
     # 启动服务器，监听 8000 端口
     uvicorn.run(app, host="0.0.0.0", port=8000)

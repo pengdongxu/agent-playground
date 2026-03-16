@@ -1,8 +1,10 @@
 import requests
 
 
-def run(city: str) -> str:
-    print("tool args:", city)
+def run(arguments: str) -> str:
+    city = arguments.get("city")
+    if not city:
+        return "未提供有效的搜索关键词"
     search_url ="https://api.asilu.com/weather/?city=%s"
     weather_data = requests.get(search_url % city).json()
     """获取指定城市的实时天气情况。参数 city 是城市名称。"""

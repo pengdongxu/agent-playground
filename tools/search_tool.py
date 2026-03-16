@@ -42,14 +42,13 @@ def _do_search(query: str, max_results: int = 5):
 
 
 # 3. 动态加载器统一调用的接口函数
-def run(query: str):
+def run(arguments: str):
     """
     动态注入规范：接收字典参数，返回字符串结果
     """
-
+    query = arguments.get("query")
     if not query:
         return "未提供有效的搜索关键词"
-
     # 执行搜索
     raw_results = _do_search(query)
     print("search results:", raw_results)

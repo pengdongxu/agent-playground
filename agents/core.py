@@ -78,9 +78,10 @@ class DeepSeekAgent:
                 func_name = tool_call.function.name
                 # 注意：API 返回的 arguments 是字符串，需要 json.loads
                 func_args = json.loads(tool_call.function.arguments)
+                # func_args = json.loads(tool_call["function"]["arguments"])
                 # 从映射表中直接找到对应的 run 函数执行
                 if func_name in self.tools_map:
-                    result = self.tools_map[func_name](**func_args)
+                    result = self.tools_map[func_name](func_args)
                     # tool 消息只需这三个字段
                     tool_result_message = {
                         "role": "tool",

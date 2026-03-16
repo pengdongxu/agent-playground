@@ -38,25 +38,41 @@ class DeepSeekAgent:
         # 动态植入长期记忆
         profile = self.reflector.load_profile(self.user_id)
 
-        self.messages[0]["content"] = self.messages[0]["content"] = f"你是一个助手。已知用户信息：{profile}"
+        # 如果profile不为空，则添加到系统提示词中
+        if profile:
+            profile = "无"
+
+
+        self.messages[0]["content"] += f"你是一个助手。已知用户信息：{profile}"
 
         # 注意：system 提示词建议放在 __init__ 中，这里只管 append 用户输入
         self.messages.append({"role": "user", "content": user_input})
 
-        # 第一次请求
-        response = self.client.chat.completions.create(
-            model="deepseek-chat",
-            messages=self.messages,
-            tools=[get_weather_spec],
-            tool_choice="auto"
-        )
+        max_steps = 5  # 防止死循环
+        step = 0
+        while step < max_steps:
 
-        response_message = response.choices[0].message
+            # 第一次请求
+            response = self.client.chat.completions.create(
+                model="deepseek-chat",
+                messages=self.messages,
+                tools=[get_weather_spec],
+                tool_choice="auto"
+            )
 
-        # 必须保存模型发出的工具调用指令
-        self.messages.append(response_message)
+            response_message = response.choices[0].message
 
-        if response_message.tool_calls:
+            # 必须保存模型发出的工具调用指令
+            self.messages.append(response_message)
+
+            # 如果不需要工具调用，则直接返回结果
+            if not response_message.tool_calls:
+                # 如果模型直接回答（没调工具）
+                content = response_message.content
+                # 此时 response_message 已经 append 过了，不需要额外操作
+                self.memory_manager.save(self.messages)
+                return content
+
             for tool_call in response_message.tool_calls:
                 func_name = tool_call.function.name
                 # 注意：API 返回的 arguments 是字符串，需要 json.loads
@@ -86,11 +102,5 @@ class DeepSeekAgent:
             self.messages.append({"role": "assistant", "content": final_answer})
 
             self.memory_manager.save(self.messages)
+            step += 1
             return final_answer
-
-        else:
-            # 如果模型直接回答（没调工具）
-            content = response_message.content
-            # 此时 response_message 已经 append 过了，不需要额外操作
-            self.memory_manager.save(self.messages)
-            return content

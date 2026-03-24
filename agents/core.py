@@ -38,74 +38,73 @@ class DeepSeekAgent:
         self._load_tools()
 
     def chat(self, user_input):
-        # 动态植入长期记忆
+        # 1. 安全处理 Profile (建议不修改全局的 messages[0]，而是作为独立的系统提示插入，或者在初始化时处理好)
         profile = self.reflector.load_profile(self.user_id)
+        context_msg = f"已知用户信息：{profile}" if profile else "已知用户信息：无"
 
-        # 如果profile不为空，则添加到系统提示词中
-        if profile:
-            profile = "无"
-        self.messages[0]["content"] += f"你是一个助手。已知用户信息：{profile}"
-
-        # 注意：system 提示词建议放在 __init__ 中，这里只管 append 用户输入
-        self.messages.append({"role": "user", "content": user_input})
+        # 将用户当前输入和上下文合并
+        current_input = f"{context_msg}\n用户输入: {user_input}"
+        self.messages.append({"role": "user", "content": current_input})
 
         max_steps = 5  # 防止死循环
         step = 0
+        # 真正的执行循环
         while step < max_steps:
+            print(f"\n--- [Agent 思考中... 第 {step + 1} 轮] ---")
 
-            # 第一次请求
+            # 向大模型发起请求
             response = self.client.chat.completions.create(
                 model="deepseek-chat",
                 messages=self.messages,
                 tools=self.tools_spec if self.tools_spec else None
-
             )
 
             response_message = response.choices[0].message
 
-            # 必须保存模型发出的工具调用指令
+            # 将模型的回复加入记忆
             self.messages.append(response_message)
 
-            # 如果不需要工具调用，则直接返回结果
+            # --- 核心分支判断 ---
+            # 如果模型没有调用工具（意味着它觉得可以直接回答了）
             if not response_message.tool_calls:
-                # 如果模型直接回答（没调工具）
-                content = response_message.content
-                # 此时 response_message 已经 append 过了，不需要额外操作
-                self.memory_manager.save(self.messages)
-                return content
+                final_answer = response_message.content
+                self.memory_manager.save(self.messages)  # 保存记忆
+                return final_answer
 
+            # 如果模型决定调用工具
             for tool_call in response_message.tool_calls:
                 func_name = tool_call.function.name
-                # 注意：API 返回的 arguments 是字符串，需要 json.loads
                 func_args = json.loads(tool_call.function.arguments)
-                # func_args = json.loads(tool_call["function"]["arguments"])
-                # 从映射表中直接找到对应的 run 函数执行
+
+                print(f"DEBUG: ⚡ 触发工具调用: {func_name}, 参数: {func_args}")
+
+                # 执行工具
                 if func_name in self.tools_map:
-                    result = self.tools_map[func_name](func_args)
-                    # tool 消息只需这三个字段
-                    tool_result_message = {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "name": func_name,
-                        "content": json.dumps(result, ensure_ascii=False),  # 转为 JSON 字符串
-                    }
-                    self.messages.append(tool_result_message)
+                    try:
+                        result = self.tools_map[func_name](func_args)
+                    except Exception as e:
+                        result = f"工具执行报错: {str(e)}"
                 else:
                     result = "工具未找到"
-                print(f"DEBUG: 成功捕获工具调用：{func_name}, 参数：{func_args}")
 
-            # 第二次请求不需要再传 tools 和 tool_choice
-            final_response = self.client.chat.completions.create(
-                model="deepseek-chat",
-                messages=self.messages
-            )
+                # 将工具执行结果构造为 tool 消息格式，并加入历史
+                tool_result_message = {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "name": func_name,
+                    "content": json.dumps(result, ensure_ascii=False),
+                }
+                self.messages.append(tool_result_message)
+                print(f"DEBUG: 🛠️ 工具返回结果: {result}")
 
-            final_answer = final_response.choices[0].message.content
-            self.messages.append({"role": "assistant", "content": final_answer})
-
-            self.memory_manager.save(self.messages)
+            # 步数加1，继续下一次 while 循环，模型会读取刚才加入的 tool_result_message 决定下一步
             step += 1
-            return final_answer
+
+        # 如果超出了最大步数
+        error_msg = "抱歉，任务过于复杂，我未能得出最终结论。"
+        self.messages.append({"role": "assistant", "content": error_msg})
+        self.memory_manager.save(self.messages)
+        return error_msg
 
 
     def _load_tools(self):
